@@ -50,14 +50,21 @@ defmodule RedisMutex.Lock do
     end
     ```
   """
-  defmacro with_lock(key, timeout \\ @default_timeout, expiry \\ @default_expiry, do: clause) do
+  defmacro with_lock(
+             key,
+             timeout \\ @default_timeout,
+             expiry \\ @default_expiry,
+             retry_delay \\ nil,
+             do: clause
+           ) do
     quote do
       key = unquote(key)
       timeout = unquote(timeout)
       expiry = unquote(expiry)
+      retry_delay = unquote(retry_delay)
       uuid = UUID.uuid1()
 
-      RedisMutex.Lock.take_lock(key, uuid, timeout, expiry)
+      RedisMutex.Lock.take_lock(key, uuid, timeout, retry_delay, expiry)
 
       block_value = unquote(clause)
 
@@ -72,19 +79,32 @@ defmodule RedisMutex.Lock do
   It will call itself recursively until it is able to set a lock
   or the timeout expires.
   """
-  def take_lock(key, uuid, timeout \\ @default_timeout, expiry \\ @default_expiry, finish \\ nil)
+  def take_lock(
+        key,
+        uuid,
+        timeout \\ @default_timeout,
+        expiry \\ @default_expiry,
+        retry_delay \\ nil,
+        finish \\ nil
+      )
 
-  def take_lock(key, uuid, timeout, expiry, nil) do
+  def take_lock(key, uuid, timeout, expiry, retry_delay, nil) do
     finish = DateTime.add(DateTime.utc_now(), timeout, :millisecond)
-    take_lock(key, uuid, timeout, expiry, finish)
+    take_lock(key, uuid, timeout, expiry, retry_delay, finish)
   end
 
-  def take_lock(key, uuid, timeout, expiry, finish) do
+  def take_lock(key, uuid, timeout, expiry, retry_delay, finish) do
     if DateTime.compare(finish, DateTime.utc_now()) == :lt do
       raise RedisMutex.Error, message: "Unable to obtain lock."
     end
 
     if !lock(key, uuid, expiry) do
+      # Sleep for a period before retrying lock acquisition if a retry delay is given
+      if is_integer(retry_delay) do
+        delay = retry_delay + :rand.uniform(floor(retry_delay / 2))
+        Process.sleep(delay)
+      end
+
       take_lock(key, uuid, timeout, expiry, finish)
     end
   end
