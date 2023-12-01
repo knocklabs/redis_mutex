@@ -29,6 +29,7 @@ defmodule RedisMutex.Mixfile do
     [
       {:redix, ">= 0.0.0"},
       {:elixir_uuid, "~> 1.2"},
+      {:telemetry, "~> 1.2"},
 
       # Dev and test dependencies
       {:credo, "~> 1.6", only: [:dev, :test]},

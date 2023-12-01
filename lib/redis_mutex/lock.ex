@@ -50,27 +50,27 @@ defmodule RedisMutex.Lock do
     end
     ```
   """
-  defmacro with_lock(
-             key,
-             timeout \\ @default_timeout,
-             expiry \\ @default_expiry,
-             retry_delay \\ nil,
-             do: clause
-           ) do
+  defmacro with_lock(key, opts \\ [], do: block) do
+    default_timeout = @default_timeout
+    default_expiry = @default_expiry
+
     quote do
       key = unquote(key)
-      timeout = unquote(timeout)
-      expiry = unquote(expiry)
-      retry_delay = unquote(retry_delay)
+
+      opts = unquote(opts)
+      timeout = Keyword.get(opts, :timeout, unquote(default_timeout))
+      expiry = Keyword.get(opts, :expiry, unquote(default_expiry))
+      retry_delay = Keyword.get(opts, :retry_delay)
+
       uuid = UUID.uuid1()
 
-      RedisMutex.Lock.take_lock(key, uuid, timeout, retry_delay, expiry)
+      RedisMutex.Lock.take_lock(key, uuid, timeout, expiry, retry_delay)
 
-      block_value = unquote(clause)
+      result = unquote(block)
 
       RedisMutex.Lock.unlock(key, uuid)
 
-      block_value
+      result
     end
   end
 
@@ -79,33 +79,41 @@ defmodule RedisMutex.Lock do
   It will call itself recursively until it is able to set a lock
   or the timeout expires.
   """
-  def take_lock(
-        key,
-        uuid,
-        timeout \\ @default_timeout,
-        expiry \\ @default_expiry,
-        retry_delay \\ nil,
-        finish \\ nil
-      )
-
-  def take_lock(key, uuid, timeout, expiry, retry_delay, nil) do
+  def take_lock(key, uuid, timeout, expiry, retry_delay) do
+    start = System.monotonic_time(:microsecond)
     finish = DateTime.add(DateTime.utc_now(), timeout, :millisecond)
-    take_lock(key, uuid, timeout, expiry, retry_delay, finish)
+
+    attempt_count = take_lock(key, uuid, timeout, expiry, retry_delay, start, finish, 1)
+
+    stop = System.monotonic_time(:microsecond)
+
+    :telemetry.execute([:redis_mutex, :take_lock, :success], %{duration: stop - start}, %{
+      attempt_count: attempt_count
+    })
+
+    :ok
+  rescue
+    e in RedisMutex.Error ->
+      :telemetry.execute([:redis_mutex, :take_lock, :exception], %{})
+
+      reraise e, __STACKTRACE__
   end
 
-  def take_lock(key, uuid, timeout, expiry, retry_delay, finish) do
+  defp take_lock(key, uuid, timeout, expiry, retry_delay, start, finish, attempt) do
     if DateTime.compare(finish, DateTime.utc_now()) == :lt do
       raise RedisMutex.Error, message: "Unable to obtain lock."
     end
 
-    if !lock(key, uuid, expiry) do
+    if lock(key, uuid, expiry) do
+      attempt
+    else
       # Sleep for a period before retrying lock acquisition if a retry delay is given
       if is_integer(retry_delay) do
         delay = retry_delay + :rand.uniform(floor(retry_delay / 2))
         Process.sleep(delay)
       end
 
-      take_lock(key, uuid, timeout, expiry, finish)
+      take_lock(key, uuid, timeout, expiry, retry_delay, start, finish, attempt + 1)
     end
   end
 
