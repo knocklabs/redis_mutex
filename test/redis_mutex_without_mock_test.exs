@@ -39,7 +39,7 @@ defmodule RedisMutexWithoutMockTest do
           try do
             # Make sure this doesn't conflict with other tests in this file
             # because everything gets run async and they could step on each other
-            with_lock("two_threads_one_loses_lock", 500) do
+            with_lock("two_threads_one_loses_lock", timeout: 500) do
               start_time = DateTime.utc_now()
               :timer.sleep(1000)
               end_time = DateTime.utc_now()
@@ -79,7 +79,7 @@ defmodule RedisMutexWithoutMockTest do
       # Kick off a task that will run for a long time, holding the lock
       t =
         Task.async(fn ->
-          with_lock("two_threads_lock_expires", 10_000, 250) do
+          with_lock("two_threads_lock_expires", timeout: 10_000, expiry: 250) do
             :timer.sleep(10_000)
           end
         end)
@@ -89,7 +89,7 @@ defmodule RedisMutexWithoutMockTest do
 
       # try to run another task and see if it gets the lock
       results =
-        with_lock("two_threads_lock_expires", 1000, 500) do
+        with_lock("two_threads_lock_expires", timeout: 1000, expiry: 500) do
           "I RAN!!!"
         end
 
