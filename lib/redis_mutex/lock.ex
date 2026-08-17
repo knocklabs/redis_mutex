@@ -60,17 +60,42 @@ defmodule RedisMutex.Lock do
       opts = unquote(opts)
       timeout = Keyword.get(opts, :timeout, unquote(default_timeout))
       expiry = Keyword.get(opts, :expiry, unquote(default_expiry))
+      release_on_raise = Keyword.get(opts, :release_on_raise, false)
       retry_delay = Keyword.get(opts, :retry_delay)
 
       uuid = UUID.uuid1()
 
       RedisMutex.Lock.take_lock(key, uuid, timeout, expiry, retry_delay)
 
-      result = unquote(block)
+      try do
+        unquote(block)
+      rescue
+        e ->
+          if release_on_raise do
+            RedisMutex.Lock.unlock(key, uuid)
+          end
 
-      RedisMutex.Lock.unlock(key, uuid)
+          reraise e, __STACKTRACE__
+      catch
+        :exit, reason ->
+          if release_on_raise do
+            RedisMutex.Lock.unlock(key, uuid)
+          end
 
-      result
+          exit(reason)
+
+        val ->
+          if release_on_raise do
+            RedisMutex.Lock.unlock(key, uuid)
+          end
+
+          throw(val)
+      else
+        result ->
+          RedisMutex.Lock.unlock(key, uuid)
+
+          result
+      end
     end
   end
 
