@@ -6,6 +6,40 @@ defmodule RedisMutexWithoutMockTest do
   @moduletag :redis_dependent
 
   describe "with_lock" do
+    test "releases the lock when the wrapped code raises and release_on_raise is enabled" do
+      key = "release_lock_on_raise"
+
+      assert_raise RuntimeError, "wrapped code failed", fn ->
+        with_lock(key, release_on_raise: true) do
+          raise "wrapped code failed"
+        end
+      end
+
+      result =
+        with_lock(key, timeout: 100) do
+          :lock_reacquired
+        end
+
+      assert result == :lock_reacquired
+    end
+
+    test "releases the lock when the wrapped code throws and release_on_raise is enabled" do
+      key = "release_lock_on_throw"
+
+      assert catch_throw(
+               with_lock(key, release_on_raise: true) do
+                 throw(:wrapped_code_failed)
+               end
+             ) == :wrapped_code_failed
+
+      result =
+        with_lock(key, timeout: 100) do
+          :lock_reacquired
+        end
+
+      assert result == :lock_reacquired
+    end
+
     test "works with two tasks contending for the same lock, making one run after the other" do
       res =
         run_in_parallel(2, 5000, fn ->
